@@ -5,7 +5,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from mjlab.scripts.csv_to_npz import MotionLoader
+from mjlab.scripts.csv_to_npz import (
+  CSV_JOINT_NAMES,
+  MotionLoader,
+  check_joint_count,
+)
 
 
 @pytest.mark.parametrize(
@@ -40,3 +44,18 @@ def test_motion_loader_keeps_last_frame(
   assert loader.output_frames == expected_frames
   last_input_frame = (expected_frames - 1) * input_fps / output_fps
   assert loader.motion_dof_poss[-1].item() == pytest.approx(last_input_frame, abs=1e-4)
+
+
+def test_csv_joint_count_must_match_robot(tmp_path: Path) -> None:
+  # A G1 CSV (29 joints) passed with --robot r1 should fail before simulating.
+  rows = np.zeros((10, 7 + len(CSV_JOINT_NAMES["g1"])))
+  rows[:, 6] = 1.0
+  csv_path = tmp_path / "g1.csv"
+  np.savetxt(csv_path, rows, delimiter=",")
+  loader = MotionLoader(
+    motion_file=str(csv_path), input_fps=30, output_fps=50, device="cpu"
+  )
+
+  check_joint_count(loader, CSV_JOINT_NAMES["g1"])
+  with pytest.raises(ValueError, match="29 joint columns but the robot expects 26"):
+    check_joint_count(loader, CSV_JOINT_NAMES["r1"])
