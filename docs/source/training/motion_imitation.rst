@@ -79,10 +79,10 @@ A local NPZ is passed with ``--env.commands.motion.motion-file`` instead of
        --env.commands.motion.motion-file motions/<MOTION_NAME>.npz \
        --env.scene.num-envs 4096
 
-Unitree R1 from Axis Studio captures
+Unitree R1 from Axis Neuron captures
 ------------------------------------
 
-R1 reference motions can be produced from Noitom Axis Studio BVH exports
+R1 reference motions can be produced from Noitom Axis Neuron BVH exports
 with the `KWoolf/GMR <https://github.com/KWoolf/GMR>`_ fork of GMR, which
 retargets to the 26-DoF R1, limits joint velocities, corrects foot
 penetration and writes CSVs in the R1 joint order:
