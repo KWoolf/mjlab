@@ -17,6 +17,13 @@ Added
   conditional nodes, which require CUDA 12.4 or newer.
 - Added ``RewardManager.term_rewards`` and ``RewardManager.get_term()`` for the
   per-term reward vector from the last step :issue:`1223`.
+- Added the Unitree R1 (26 DoF, including the two head joints) to the asset zoo and
+  the ``Mjlab-Tracking-Flat-Unitree-R1`` and
+  ``Mjlab-Tracking-Flat-Unitree-R1-No-State-Estimation`` tracking tasks.
+- ``csv_to_npz`` takes ``--robot`` (``g1`` or ``r1``) to pick the scene and CSV joint
+  order, ``--output-file`` to choose where the NPZ is saved and ``--upload False`` to
+  skip the WandB registry. It now raises an error when the CSV's joint column count
+  does not match the robot.
 
 Changed
 ^^^^^^^
@@ -26,6 +33,8 @@ Changed
   terrain; square ones are mirrored across x=y for a given seed.
 - ``PinholeCameraPatternCfg`` rays now follow MuJoCo's image layout (row 0 at the top,
   through pixel centers), matching ``CameraSensor``. Previously the image was flipped.
+- ``csv_to_npz --render True`` saves the video next to the NPZ (``/tmp/motion.mp4`` by
+  default) instead of ``./motion.mp4``.
 - Bumped ``mujoco`` and ``mujoco-warp`` from 3.11 to 3.16 and raised the
   ``warp-lang`` floor to 1.15.
 - ``BuiltinDcMotorActuatorCfg`` PID gains are now in torque space, following

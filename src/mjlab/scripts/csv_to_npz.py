@@ -1,5 +1,6 @@
 import math
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -11,6 +12,7 @@ from mjlab.entity import Entity
 from mjlab.scene import Scene
 from mjlab.sim.sim import Simulation, SimulationCfg
 from mjlab.tasks.tracking.config.g1.env_cfgs import unitree_g1_flat_tracking_env_cfg
+from mjlab.tasks.tracking.config.r1.env_cfgs import unitree_r1_flat_tracking_env_cfg
 from mjlab.utils.lab_api.math import (
   axis_angle_from_quat,
   quat_conjugate,
@@ -19,6 +21,76 @@ from mjlab.utils.lab_api.math import (
 )
 from mjlab.viewer.offscreen_renderer import OffscreenRenderer
 from mjlab.viewer.viewer_config import ViewerConfig
+
+# Joint order of the CSV columns after the root pose, for each supported robot.
+# The R1 order is the model order, which is what GMR's robot_motion_to_csv.py
+# writes.
+CSV_JOINT_NAMES: dict[str, tuple[str, ...]] = {
+  "g1": (
+    "left_hip_pitch_joint",
+    "left_hip_roll_joint",
+    "left_hip_yaw_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+    "right_hip_pitch_joint",
+    "right_hip_roll_joint",
+    "right_hip_yaw_joint",
+    "right_knee_joint",
+    "right_ankle_pitch_joint",
+    "right_ankle_roll_joint",
+    "waist_yaw_joint",
+    "waist_roll_joint",
+    "waist_pitch_joint",
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",
+    "left_elbow_joint",
+    "left_wrist_roll_joint",
+    "left_wrist_pitch_joint",
+    "left_wrist_yaw_joint",
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint",
+    "right_elbow_joint",
+    "right_wrist_roll_joint",
+    "right_wrist_pitch_joint",
+    "right_wrist_yaw_joint",
+  ),
+  "r1": (
+    "left_hip_pitch_joint",
+    "left_hip_roll_joint",
+    "left_hip_yaw_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+    "right_hip_pitch_joint",
+    "right_hip_roll_joint",
+    "right_hip_yaw_joint",
+    "right_knee_joint",
+    "right_ankle_pitch_joint",
+    "right_ankle_roll_joint",
+    "waist_roll_joint",
+    "waist_yaw_joint",
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",
+    "left_elbow_joint",
+    "left_wrist_roll_joint",
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint",
+    "right_elbow_joint",
+    "right_wrist_roll_joint",
+    "head_pitch_joint",
+    "head_yaw_joint",
+  ),
+}
+
+ROBOT_ENV_CFGS = {
+  "g1": unitree_g1_flat_tracking_env_cfg,
+  "r1": unitree_r1_flat_tracking_env_cfg,
+}
 
 
 class MotionLoader:
@@ -184,6 +256,16 @@ class MotionLoader:
     return state, reset_flag
 
 
+def check_joint_count(motion: MotionLoader, joint_names) -> None:
+  num_csv_joints = motion.motion_dof_poss_input.shape[1]
+  if num_csv_joints != len(joint_names):
+    raise ValueError(
+      f"{motion.motion_file} has {num_csv_joints} joint columns but the robot "
+      f"expects {len(joint_names)}. Check that --robot matches the robot it was "
+      "retargeted to."
+    )
+
+
 def run_sim(
   sim: Simulation,
   scene: Scene,
@@ -195,6 +277,8 @@ def run_sim(
   render,
   line_range,
   renderer: OffscreenRenderer | None = None,
+  output_file: str = "/tmp/motion.npz",
+  upload: bool = True,
 ):
   motion = MotionLoader(
     motion_file=input_file,
@@ -203,6 +287,8 @@ def run_sim(
     device=sim.device,
     line_range=line_range,
   )
+
+  check_joint_count(motion, joint_names)
 
   robot: Entity = scene["robot"]
   robot_joint_indexes = robot.find_joints(joint_names, preserve_order=True)[0]
@@ -309,35 +395,41 @@ def run_sim(
         ):
           log[k] = np.stack(log[k], axis=0)
 
-        print("Saving to /tmp/motion.npz...")
-        np.savez("/tmp/motion.npz", **log)
+        Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+        print(f"Saving to {output_file}...")
+        np.savez(output_file, **log)
 
-        print("Uploading to Weights & Biases...")
-        import wandb
-
-        COLLECTION = output_name
-        run = wandb.init(project="csv_to_npz", name=COLLECTION)
-        print(f"[INFO]: Logging motion to wandb: {COLLECTION}")
-        REGISTRY = "motions"
-        logged_artifact = run.log_artifact(
-          artifact_or_path="/tmp/motion.npz", name=COLLECTION, type=REGISTRY
-        )
-        run.link_artifact(
-          artifact=logged_artifact,
-          target_path=f"wandb-registry-{REGISTRY}/{COLLECTION}",
-        )
-        print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{COLLECTION}")
-
+        video_file = str(Path(output_file).with_suffix(".mp4"))
         if render:
           import mediapy as media
 
-          print("Creating video...")
-          media.write_video("./motion.mp4", frames, fps=output_fps)
+          print(f"Saving video to {video_file}...")
+          media.write_video(video_file, frames, fps=output_fps)
 
-          print("Logging video to wandb...")
-          wandb.log({"motion_video": wandb.Video("./motion.mp4", format="mp4")})
+        if upload:
+          print("Uploading to Weights & Biases...")
+          import wandb
 
-        wandb.finish()
+          COLLECTION = output_name
+          run = wandb.init(project="csv_to_npz", name=COLLECTION)
+          print(f"[INFO]: Logging motion to wandb: {COLLECTION}")
+          REGISTRY = "motions"
+          # train.py looks for motion.npz in the downloaded artifact, so the
+          # file is stored under that name whatever output_file is called.
+          artifact = wandb.Artifact(name=COLLECTION, type=REGISTRY)
+          artifact.add_file(output_file, name="motion.npz")
+          logged_artifact = run.log_artifact(artifact)
+          run.link_artifact(
+            artifact=logged_artifact,
+            target_path=f"wandb-registry-{REGISTRY}/{COLLECTION}",
+          )
+          print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{COLLECTION}")
+
+          if render:
+            print("Logging video to wandb...")
+            wandb.log({"motion_video": wandb.Video(video_file, format="mp4")})
+
+          wandb.finish()
 
 
 def main(
@@ -348,17 +440,23 @@ def main(
   device: str = "cuda:0",
   render: bool = False,
   line_range: tuple[int, int] | None = None,
+  robot: Literal["g1", "r1"] = "g1",
+  output_file: str = "/tmp/motion.npz",
+  upload: bool = True,
 ):
   """Replay motion from CSV file and output to npz file.
 
   Args:
     input_file: Path to the input CSV file.
-    output_name: Path to the output npz file.
+    output_name: Name of the motion in the WandB registry.
     input_fps: Frame rate of the CSV file.
     output_fps: Desired output frame rate.
     device: Device to use.
     render: Whether to render the simulation and save a video.
     line_range: Range of lines to process from the CSV file.
+    robot: Robot the CSV was retargeted to. Sets the scene and CSV joint order.
+    output_file: Path to save the npz file to.
+    upload: Whether to upload the npz file to the WandB registry.
   """
   if device.startswith("cuda") and not torch.cuda.is_available():
     print("[WARNING]: CUDA is not available. Falling back to CPU. This may be slow.")
@@ -367,7 +465,7 @@ def main(
   sim_cfg = SimulationCfg()
   sim_cfg.mujoco.timestep = 1.0 / output_fps
 
-  scene = Scene(unitree_g1_flat_tracking_env_cfg().scene, device=device)
+  scene = Scene(ROBOT_ENV_CFGS[robot]().scene, device=device)
   model = scene.compile()
 
   sim = Simulation(num_envs=1, cfg=sim_cfg, model=model, device=device)
@@ -395,37 +493,7 @@ def main(
   run_sim(
     sim=sim,
     scene=scene,
-    joint_names=[
-      "left_hip_pitch_joint",
-      "left_hip_roll_joint",
-      "left_hip_yaw_joint",
-      "left_knee_joint",
-      "left_ankle_pitch_joint",
-      "left_ankle_roll_joint",
-      "right_hip_pitch_joint",
-      "right_hip_roll_joint",
-      "right_hip_yaw_joint",
-      "right_knee_joint",
-      "right_ankle_pitch_joint",
-      "right_ankle_roll_joint",
-      "waist_yaw_joint",
-      "waist_roll_joint",
-      "waist_pitch_joint",
-      "left_shoulder_pitch_joint",
-      "left_shoulder_roll_joint",
-      "left_shoulder_yaw_joint",
-      "left_elbow_joint",
-      "left_wrist_roll_joint",
-      "left_wrist_pitch_joint",
-      "left_wrist_yaw_joint",
-      "right_shoulder_pitch_joint",
-      "right_shoulder_roll_joint",
-      "right_shoulder_yaw_joint",
-      "right_elbow_joint",
-      "right_wrist_roll_joint",
-      "right_wrist_pitch_joint",
-      "right_wrist_yaw_joint",
-    ],
+    joint_names=CSV_JOINT_NAMES[robot],
     input_fps=input_fps,
     input_file=input_file,
     output_fps=output_fps,
@@ -433,6 +501,8 @@ def main(
     render=render,
     line_range=line_range,
     renderer=renderer,
+    output_file=output_file,
+    upload=upload,
   )
 
 
